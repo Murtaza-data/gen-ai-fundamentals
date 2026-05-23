@@ -1,31 +1,29 @@
-# Gen AI Fundamentals
+# 🤖 AI Document Assistant
 
-A hands on learning journey through core Generative AI concepts, built as part of my AI/ML portfolio.
+A Document Q&A web application built with Retrieval Augmented Generation (RAG).
 
-## Topics Covered
+**🔗 Live Demo:** [Try the app here](https://share.streamlit.io)
 
-| Topic | Description |
-|---|---|
-| LLMs | Understanding Large Language Models and making API calls |
-| Embeddings | Converting text into meaningful vectors |
-| Vector Databases | Storing and searching embeddings using ChromaDB |
-| RAG | Building Retrieval Augmented Generation pipelines |
-| Langchain | Simplifying AI pipelines using the Langchain framework |
+## What It Does
 
-## Notebooks
-
-- `01_llms_embeddings_vectordb.ipynb` — LLMs, Embeddings, and Vector Database implementation
-- `02_rag.ipynb` — Full RAG pipeline from scratch
-- `03_langchain.ipynb` — RAG pipeline built with Langchain
+Upload any PDF and ask questions about it in natural language. The app finds relevant information from your document and generates accurate answers using AI.
 
 ## Tech Stack
 
-- Python
-- Groq API (LLaMA 3.1)
-- Sentence Transformers
-- ChromaDB
-- Langchain
+- LLaMA 3.1 (Groq) — Language Model for answer generation
+- Langchain — RAG pipeline orchestration
+- ChromaDB — Vector database for similarity search
+- HuggingFace Embeddings — Converting text to vectors
+- Streamlit — Web application interface
+
+## Learning Notebooks
+
+- 01_llms_embeddings_vectordb.ipynb — LLMs, Embeddings, Vector Databases
+- 02_rag.ipynb — Retrieval Augmented Generation
+- 03_langchain.ipynb — Langchain Framework
 
 ## About
 
-I have a Bachelor's in Information Technology and a Master's in Data Science and Analytics. I am currently building hands-on Gen AI projects to apply my skills in real world applications.
+**Mohammad Murtaza** — MSc Data Science & Analytics
+
+[GitHub Profile](https://github.com/Murtaza-data)
