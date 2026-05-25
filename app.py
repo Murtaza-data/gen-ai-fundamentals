@@ -17,7 +17,7 @@ st.set_page_config(
 
 # Header
 st.title("🤖 AI Document Assistant")
-st.markdown("### Built by Mohammad Murtaza | RAG + LLaMA + Langchain")
+
 st.markdown("---")
 
 # Description
