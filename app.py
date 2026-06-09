@@ -4,7 +4,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma, FAISS
 from langchain_community.retrievers import BM25Retriever
-from langchain.retrievers.ensemble import EnsembleRetriever
+
 from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage
@@ -108,20 +108,27 @@ if uploaded_file and groq_api_key:
             retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
 
         # ── v2: Hybrid Search ──────────────────────────────
+             
         elif "v2" in version:
             # FAISS — semantic similarity search
             faiss_vectorstore = FAISS.from_documents(chunks, embeddings)
-            faiss_retriever = faiss_vectorstore.as_retriever(search_kwargs={"k": 3})
+            faiss_docs = faiss_vectorstore.similarity_search(question if question else "summary", k=3)
 
             # BM25 — keyword matching
             bm25_retriever = BM25Retriever.from_documents(chunks)
             bm25_retriever.k = 3
+            bm25_docs = bm25_retriever.invoke(question if question else "summary")
 
-            # Combine both — equal weight
-            retriever = EnsembleRetriever(
-                retrievers=[bm25_retriever, faiss_retriever],
-                weights=[0.5, 0.5]
-            )
+            # Combine and deduplicate manually
+            seen = set()
+            combined_docs = []
+            for doc in faiss_docs + bm25_docs:
+                if doc.page_content not in seen:
+                    seen.add(doc.page_content)
+                    combined_docs.append(doc)
+
+            retriever = None  # Not used directly in v2
+            
 
         # ── v3: GraphRAG ───────────────────────────────────
         else:
@@ -205,11 +212,27 @@ if uploaded_file and groq_api_key:
                 context = graph_context + semantic_context
                 retrieved_docs = semantic_docs
 
-            # ── v1 and v2: Standard retrieval ─────────────
+         # ── v2: Hybrid retrieval ───────────────────────
+            
+            elif "v2" in version:
+                faiss_vectorstore = FAISS.from_documents(chunks, embeddings)
+                faiss_docs = faiss_vectorstore.similarity_search(question, k=3)
+                bm25_retriever = BM25Retriever.from_documents(chunks)
+                bm25_retriever.k = 3
+                bm25_docs = bm25_retriever.invoke(question)
+                seen = set()
+                retrieved_docs = []
+                for doc in faiss_docs + bm25_docs:
+                    if doc.page_content not in seen:
+                        seen.add(doc.page_content)
+                        retrieved_docs.append(doc)
+                context = "\n".join([doc.page_content for doc in retrieved_docs])
+
+            # ── v1: Standard retrieval ─────────────────────
             else:
                 retrieved_docs = retriever.invoke(question)
                 context = "\n".join([doc.page_content for doc in retrieved_docs])
-
+                
             # Generate answer
             prompt = ChatPromptTemplate.from_template("""
             You are a helpful assistant. Answer the question based ONLY on the context below.
