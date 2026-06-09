@@ -2,9 +2,8 @@ import streamlit as st
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.vectorstores import Chroma, FAISS
+from langchain_community.vectorstores import Chroma
 from langchain_community.retrievers import BM25Retriever
-
 from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage
@@ -48,9 +47,9 @@ version = st.sidebar.radio(
 )
 
 if "v1" in version:
-    st.sidebar.info("**v1 Basic RAG:** ChromaDB semantic search. Finds chunks by meaning similarity.")
+    st.sidebar.info("**v1 Basic RAG:** ChromaDB semantic search only. Finds chunks by meaning similarity.")
 elif "v2" in version:
-    st.sidebar.info("**v2 Hybrid Search:** FAISS + BM25 combined. Finds chunks by both meaning AND exact keywords.")
+    st.sidebar.info("**v2 Hybrid Search:** ChromaDB + BM25 combined. Finds chunks by both meaning AND exact keywords.")
 else:
     st.sidebar.info("**v3 GraphRAG:** Extracts entities and relationships. Understands connections between concepts.")
 
@@ -60,7 +59,7 @@ st.sidebar.markdown("""
 **Tech Stack:**
 - 🦙 LLaMA 3.3-70b (Groq)
 - 🔗 Langchain
-- 🗄️ ChromaDB / FAISS / GraphRAG
+- 🗄️ ChromaDB / BM25 / GraphRAG
 - 🤗 HuggingFace Embeddings
 """)
 
@@ -102,50 +101,18 @@ if uploaded_file and groq_api_key:
         chunks = splitter.split_documents(pages)
         embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 
-        # ── v1: Basic RAG ──────────────────────────────────
-        if "v1" in version:
-            vectorstore = Chroma.from_documents(chunks, embeddings)
-            retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+        # ChromaDB vectorstore — used by all 3 versions
+        vectorstore = Chroma.from_documents(chunks, embeddings)
 
-        # ── v2: Hybrid Search ──────────────────────────────
-             
-        elif "v2" in version:
-            # FAISS — semantic similarity search
-            faiss_vectorstore = FAISS.from_documents(chunks, embeddings)
-            faiss_docs = faiss_vectorstore.similarity_search(question if question else "summary", k=3)
+    st.success(f"✅ Document ready! {len(pages)} pages, {len(chunks)} chunks.")
 
-            # BM25 — keyword matching
-            bm25_retriever = BM25Retriever.from_documents(chunks)
-            bm25_retriever.k = 3
-            bm25_docs = bm25_retriever.invoke(question if question else "summary")
-
-            # Combine and deduplicate manually
-            seen = set()
-            combined_docs = []
-            for doc in faiss_docs + bm25_docs:
-                if doc.page_content not in seen:
-                    seen.add(doc.page_content)
-                    combined_docs.append(doc)
-
-            retriever = None  # Not used directly in v2
-            
-
-        # ── v3: GraphRAG ───────────────────────────────────
-        else:
-            # FAISS base for semantic search
-            faiss_vectorstore = FAISS.from_documents(chunks, embeddings)
-            faiss_retriever = faiss_vectorstore.as_retriever(search_kwargs={"k": 3})
-
-            # Build knowledge graph from document
-            graph = nx.Graph()
-            chunk_entities = {}
-
-        st.success(f"✅ Document ready! {len(pages)} pages, {len(chunks)} chunks.")
-
-    # Build graph after main spinner (v3 only)
+    # ── v3 only: Build knowledge graph ────────────────
     if "v3" in version:
+        graph = nx.Graph()
+        chunk_entities = {}
+
         with st.spinner("🕸️ Building knowledge graph from document..."):
-            for i, chunk in enumerate(chunks[:20]):  # First 20 chunks for speed
+            for i, chunk in enumerate(chunks[:20]):
                 entity_prompt = f"""Extract 3-5 key entities (people, places, concepts, organizations) from this text.
                 Return ONLY a comma-separated list. Nothing else.
                 Text: {chunk.page_content}"""
@@ -154,11 +121,9 @@ if uploaded_file and groq_api_key:
                 entities = [e.strip() for e in response.content.split(",")]
                 chunk_entities[i] = entities
 
-                # Add entities as nodes
                 for entity in entities:
                     graph.add_node(entity)
 
-                # Connect entities that appear in the same chunk
                 for j in range(len(entities)):
                     for k in range(j + 1, len(entities)):
                         graph.add_edge(entities[j], entities[k], chunk_id=i)
@@ -180,9 +145,33 @@ if uploaded_file and groq_api_key:
     if question:
         with st.spinner("🔍 Searching document and generating answer..."):
 
-            # ── v3: Graph-aware retrieval ──────────────────
-            if "v3" in version:
-                # Extract entities from the question
+            # ── v1: Semantic search only ───────────────
+            if "v1" in version:
+                retrieved_docs = vectorstore.similarity_search(question, k=3)
+                context = "\n".join([doc.page_content for doc in retrieved_docs])
+
+            # ── v2: Hybrid search ──────────────────────
+            elif "v2" in version:
+                # ChromaDB semantic search
+                chroma_docs = vectorstore.similarity_search(question, k=3)
+
+                # BM25 keyword search
+                bm25_retriever = BM25Retriever.from_documents(chunks)
+                bm25_retriever.k = 3
+                bm25_docs = bm25_retriever.invoke(question)
+
+                # Combine and deduplicate
+                seen = set()
+                retrieved_docs = []
+                for doc in chroma_docs + bm25_docs:
+                    if doc.page_content not in seen:
+                        seen.add(doc.page_content)
+                        retrieved_docs.append(doc)
+                context = "\n".join([doc.page_content for doc in retrieved_docs])
+
+            # ── v3: GraphRAG ───────────────────────────
+            else:
+                # Extract entities from question
                 q_entity_prompt = f"""Extract key entities from this question.
                 Return ONLY a comma-separated list. Nothing else.
                 Question: {question}"""
@@ -205,35 +194,14 @@ if uploaded_file and groq_api_key:
                         graph_context += chunks[chunk_id].page_content + "\n\n"
 
                 # Get semantic context
-                semantic_docs = faiss_retriever.invoke(question)
+                semantic_docs = vectorstore.similarity_search(question, k=3)
                 semantic_context = "\n".join([doc.page_content for doc in semantic_docs])
 
-                # Combine graph + semantic
+                # Combine both
                 context = graph_context + semantic_context
                 retrieved_docs = semantic_docs
 
-         # ── v2: Hybrid retrieval ───────────────────────
-            
-            elif "v2" in version:
-                faiss_vectorstore = FAISS.from_documents(chunks, embeddings)
-                faiss_docs = faiss_vectorstore.similarity_search(question, k=3)
-                bm25_retriever = BM25Retriever.from_documents(chunks)
-                bm25_retriever.k = 3
-                bm25_docs = bm25_retriever.invoke(question)
-                seen = set()
-                retrieved_docs = []
-                for doc in faiss_docs + bm25_docs:
-                    if doc.page_content not in seen:
-                        seen.add(doc.page_content)
-                        retrieved_docs.append(doc)
-                context = "\n".join([doc.page_content for doc in retrieved_docs])
-
-            # ── v1: Standard retrieval ─────────────────────
-            else:
-                retrieved_docs = retriever.invoke(question)
-                context = "\n".join([doc.page_content for doc in retrieved_docs])
-                
-            # Generate answer
+            # ── Generate answer ────────────────────────
             prompt = ChatPromptTemplate.from_template("""
             You are a helpful assistant. Answer the question based ONLY on the context below.
             If the answer is not in the context, say "I don't find that information in the document."
