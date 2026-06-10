@@ -151,19 +151,30 @@ if uploaded_file and groq_api_key:
                 context = "\n".join([doc.page_content for doc in retrieved_docs])
 
             # ── v2: Hybrid search ──────────────────────
+                     
             elif "v2" in version:
                 # ChromaDB semantic search
                 chroma_docs = vectorstore.similarity_search(question, k=3)
 
-                # BM25 keyword search
-                bm25_retriever = BM25Retriever.from_documents(chunks)
-                bm25_retriever.k = 3
-                bm25_docs = bm25_retriever.invoke(question)
+                # Simple keyword search — no library needed
+                question_words = set(question.lower().split())
+                stopwords = {"what", "is", "the", "a", "an", "in", "of",
+                             "and", "or", "for", "to", "was", "are", "were",
+                             "did", "do", "does", "how", "why", "when", "where"}
+                keywords = question_words - stopwords
+
+                scored = []
+                for chunk in chunks:
+                    text = chunk.page_content.lower()
+                    score = sum(1 for word in keywords if word in text)
+                    scored.append((score, chunk))
+                scored.sort(key=lambda x: x[0], reverse=True)
+                keyword_docs = [chunk for score, chunk in scored[:3] if score > 0]
 
                 # Combine and deduplicate
                 seen = set()
                 retrieved_docs = []
-                for doc in chroma_docs + bm25_docs:
+                for doc in chroma_docs + keyword_docs:
                     if doc.page_content not in seen:
                         seen.add(doc.page_content)
                         retrieved_docs.append(doc)
