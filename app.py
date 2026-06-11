@@ -3,6 +3,7 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
+from langchain_community.retrievers import BM25Retriever
 from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage
@@ -161,20 +162,10 @@ if uploaded_file and groq_api_key:
                 # ChromaDB semantic search
                 chroma_docs = vectorstore.similarity_search(search_query, k=3)
 
-                # Simple keyword search — no library needed
-                question_words = set(search_query.lower().split())
-                stopwords = {"what", "is", "the", "a", "an", "in", "of",
-                             "and", "or", "for", "to", "was", "are", "were",
-                             "did", "do", "does", "how", "why", "when", "where"}
-                keywords = question_words - stopwords
-
-                scored = []
-                for chunk in chunks:
-                    text = chunk.page_content.lower()
-                    score = sum(1 for word in keywords if word in text)
-                    scored.append((score, chunk))
-                scored.sort(key=lambda x: x[0], reverse=True)
-                keyword_docs = [chunk for score, chunk in scored[:3] if score > 0]
+                # BM25 keyword search — ranks by word frequency and document length
+                bm25_retriever = BM25Retriever.from_documents(chunks)
+                bm25_retriever.k = 3
+                keyword_docs = bm25_retriever.invoke(search_query)
 
                 # Combine and deduplicate
                 seen = set()
