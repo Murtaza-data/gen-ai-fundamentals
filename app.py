@@ -8,7 +8,6 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage
 import networkx as nx
 import tempfile
-import os
 
 # ════════════════════════════════════════════════════════
 # PAGE SETUP
@@ -144,18 +143,26 @@ if uploaded_file and groq_api_key:
     if question:
         with st.spinner("🔍 Searching document and generating answer..."):
 
+            # ── Query rewriting — improve the question for retrieval ──
+            rewrite_prompt = f"""Rewrite this question to be clearer and more specific for searching a document.
+            Expand abbreviations and replace vague words with specific terms.
+            Return ONLY the rewritten question. Nothing else.
+            Question: {question}"""
+            rewrite_response = llm.invoke([HumanMessage(content=rewrite_prompt)])
+            search_query = rewrite_response.content.strip()
+
             # ── v1: Semantic search only ───────────────
             if "v1" in version:
-                retrieved_docs = vectorstore.similarity_search(question, k=3)
+                retrieved_docs = vectorstore.similarity_search(search_query, k=3)
                 context = "\n".join([doc.page_content for doc in retrieved_docs])
 
             # ── v2: Hybrid search ──────────────────────
             elif "v2" in version:
                 # ChromaDB semantic search
-                chroma_docs = vectorstore.similarity_search(question, k=3)
+                chroma_docs = vectorstore.similarity_search(search_query, k=3)
 
                 # Simple keyword search — no library needed
-                question_words = set(question.lower().split())
+                question_words = set(search_query.lower().split())
                 stopwords = {"what", "is", "the", "a", "an", "in", "of",
                              "and", "or", "for", "to", "was", "are", "were",
                              "did", "do", "does", "how", "why", "when", "where"}
@@ -183,7 +190,7 @@ if uploaded_file and groq_api_key:
                 # Extract entities from question
                 q_entity_prompt = f"""Extract key entities from this question.
                 Return ONLY a comma-separated list. Nothing else.
-                Question: {question}"""
+                Question: {search_query}"""
                 q_response = llm.invoke([HumanMessage(content=q_entity_prompt)])
                 q_entities = [e.strip() for e in q_response.content.split(",")]
 
@@ -203,14 +210,14 @@ if uploaded_file and groq_api_key:
                         graph_context += chunks[chunk_id].page_content + "\n\n"
 
                 # Get semantic context
-                semantic_docs = vectorstore.similarity_search(question, k=3)
+                semantic_docs = vectorstore.similarity_search(search_query, k=3)
                 semantic_context = "\n".join([doc.page_content for doc in semantic_docs])
 
                 # Combine both
                 context = graph_context + semantic_context
                 retrieved_docs = semantic_docs
 
-            # ── Generate answer ────────────────────────
+            # ── Generate answer — uses the ORIGINAL question ──
             prompt = ChatPromptTemplate.from_template("""
             You are a helpful assistant. Answer the question based ONLY on the context below.
             If the answer is not in the context, say "I don't find that information in the document."
@@ -236,6 +243,7 @@ if uploaded_file and groq_api_key:
         ))
         pages_text = ", ".join(str(p) for p in source_pages)
         st.caption(f"📌 Sources: Page {pages_text}")
+        st.caption(f"🔄 Search query used: {search_query}")
 
         st.markdown("---")
 
