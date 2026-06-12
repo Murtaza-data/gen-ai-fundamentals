@@ -120,13 +120,13 @@ if uploaded_files and groq_api_key:
 
     st.success(f"✅ {len(uploaded_files)} document(s) ready! {len(all_pages)} pages, {len(chunks)} chunks.")
 
-    # ── Metadata filtering — choose which document to search ──
+    # ── Metadata filtering — who decides which document to search ──
     doc_choice = st.sidebar.selectbox(
         "📂 Search in:",
-        ["All documents"] + [f.name for f in uploaded_files]
+        ["🤖 Auto (AI decides)", "All documents"] + [f.name for f in uploaded_files]
     )
 
-    if doc_choice == "All documents":
+    if doc_choice in ("🤖 Auto (AI decides)", "All documents"):
         active_chunks = chunks
         chroma_filter = None
     else:
@@ -141,9 +141,10 @@ if uploaded_files and groq_api_key:
     if "v3" in version:
         graph = nx.Graph()
         chunk_entities = {}
+        graph_chunks = active_chunks  # remember which chunks the graph was built from
 
         with st.spinner("🕸️ Building knowledge graph from document..."):
-            for i, chunk in enumerate(active_chunks[:20]):
+            for i, chunk in enumerate(graph_chunks[:20]):
                 entity_prompt = f"""Extract 3-5 key entities (people, places, concepts, organizations) from this text.
                 Return ONLY a comma-separated list. Nothing else.
                 Text: {chunk.page_content}"""
@@ -175,6 +176,25 @@ if uploaded_files and groq_api_key:
 
     if question:
         with st.spinner("🔍 Searching documents and generating answer..."):
+
+            # ── Auto-routing — the LLM decides which document to search ──
+            routed_doc = None
+            if doc_choice == "🤖 Auto (AI decides)" and len(uploaded_files) > 1:
+                file_names = [f.name for f in uploaded_files]
+                routing_prompt = f"""You are a document router. These documents are available: {file_names}
+                Which single document is most likely to contain the answer to this question?
+                Reply with ONLY the exact filename from the list, or ALL if the question could apply to any document.
+                Question: {question}"""
+                routing_response = llm.invoke([HumanMessage(content=routing_prompt)])
+                candidate = routing_response.content.strip()
+
+                if candidate in file_names:
+                    routed_chunks = [c for c in chunks if c.metadata.get("source") == candidate]
+                    if len(routed_chunks) > 0:
+                        active_chunks = routed_chunks
+                        chroma_filter = {"source": candidate}
+                        routed_doc = candidate
+                # If the LLM replied ALL or an invalid name → keep searching all documents
 
             # ── Query rewriting — improve the question for retrieval ──
             rewrite_prompt = f"""Rewrite this question to be clearer and more specific for searching a document.
@@ -228,11 +248,11 @@ if uploaded_files and groq_api_key:
                             if edge_data and "chunk_id" in edge_data:
                                 connected_chunk_ids.add(edge_data["chunk_id"])
 
-                # Get graph context
+                # Get graph context — uses the chunks the graph was built from
                 graph_context = ""
                 for chunk_id in list(connected_chunk_ids)[:3]:
-                    if chunk_id < len(active_chunks):
-                        graph_context += active_chunks[chunk_id].page_content + "\n\n"
+                    if chunk_id < len(graph_chunks):
+                        graph_context += graph_chunks[chunk_id].page_content + "\n\n"
 
                 # Get semantic context (respects document filter)
                 semantic_docs = vectorstore.similarity_search(
@@ -270,6 +290,8 @@ if uploaded_files and groq_api_key:
         ))
         st.caption(f"📌 Sources: {' | '.join(sources)}")
         st.caption(f"🔄 Search query used: {search_query}")
+        if routed_doc:
+            st.caption(f"🤖 AI routed this question to: {routed_doc}")
 
         st.markdown("---")
 
@@ -296,3 +318,11 @@ else:
 
 # ════════════════════════════════════════════════════════
 # FOOTER
+# ════════════════════════════════════════════════════════
+
+st.markdown("---")
+st.markdown(
+    "Built by **Mohammad Murtaza** | "
+    "[GitHub](https://github.com/Murtaza-data) | "
+    "Powered by RAG + LLaMA + Langchain"
+)
