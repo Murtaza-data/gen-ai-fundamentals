@@ -73,6 +73,33 @@ st.sidebar.markdown("---")
 st.sidebar.markdown("👨‍💻 [GitHub Profile](https://github.com/Murtaza-data)")
 
 # ════════════════════════════════════════════════════════
+# KNOWLEDGE BASE — built ONCE per file set, cached across reruns
+# ════════════════════════════════════════════════════════
+
+@st.cache_resource(show_spinner=False)
+def build_knowledge_base(files_data):
+    all_pages = []
+    for name, data in files_data:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            tmp.write(data)
+            tmp_path = tmp.name
+
+        loader = PyPDFLoader(tmp_path)
+        pages = loader.load()
+        for page in pages:
+            page.metadata["source"] = name
+        all_pages.extend(pages)
+
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=800,
+        chunk_overlap=100
+    )
+    chunks = splitter.split_documents(all_pages)
+    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+    vectorstore = Chroma.from_documents(chunks, embeddings)
+    return all_pages, chunks, vectorstore
+
+# ════════════════════════════════════════════════════════
 # MAIN APP
 # ════════════════════════════════════════════════════════
 
@@ -87,32 +114,9 @@ if uploaded_files and groq_api_key:
 
     llm = ChatGroq(model="llama-3.3-70b-versatile", api_key=groq_api_key)
 
+    files_data = tuple((f.name, f.getvalue()) for f in uploaded_files)
     with st.spinner("⏳ Processing your documents..."):
-        # Load all PDFs — label every page with its original filename
-        all_pages = []
-        for uploaded_file in uploaded_files:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                tmp.write(uploaded_file.read())
-                tmp_path = tmp.name
-
-            loader = PyPDFLoader(tmp_path)
-            pages = loader.load()
-
-            # Replace temp file path with the real filename in metadata
-            for page in pages:
-                page.metadata["source"] = uploaded_file.name
-
-            all_pages.extend(pages)
-
-        splitter = RecursiveCharacterTextSplitter(
-            chunk_size=800,
-            chunk_overlap=100
-        )
-        chunks = splitter.split_documents(all_pages)
-        embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-
-        # ChromaDB vectorstore — used by all 3 versions
-        vectorstore = Chroma.from_documents(chunks, embeddings)
+        all_pages, chunks, vectorstore = build_knowledge_base(files_data)
 
     st.success(f"✅ {len(uploaded_files)} document(s) ready! {len(all_pages)} pages, {len(chunks)} chunks.")
 
@@ -128,6 +132,10 @@ if uploaded_files and groq_api_key:
     else:
         active_chunks = [c for c in chunks if c.metadata.get("source") == doc_choice]
         chroma_filter = {"source": doc_choice}
+
+    if len(active_chunks) == 0:
+        st.error(f"⚠️ No readable text found in {doc_choice}. It may be a scanned PDF (images, not text). Try another document.")
+        st.stop()
 
     # ── v3 only: Build knowledge graph ────────────────
     if "v3" in version:
@@ -179,18 +187,18 @@ if uploaded_files and groq_api_key:
             # ── v1: Semantic search only ───────────────
             if "v1" in version:
                 retrieved_docs = vectorstore.similarity_search(
-                    search_query, k=3, filter=chroma_filter)
+                    search_query, k=5, filter=chroma_filter)
                 context = "\n".join([doc.page_content for doc in retrieved_docs])
 
             # ── v2: Hybrid search ──────────────────────
             elif "v2" in version:
                 # ChromaDB semantic search (respects document filter)
                 chroma_docs = vectorstore.similarity_search(
-                    search_query, k=3, filter=chroma_filter)
+                    search_query, k=5, filter=chroma_filter)
 
                 # BM25 keyword search (built only from the filtered chunks)
                 bm25_retriever = BM25Retriever.from_documents(active_chunks)
-                bm25_retriever.k = 3
+                bm25_retriever.k = 5
                 keyword_docs = bm25_retriever.invoke(search_query)
 
                 # Combine and deduplicate
@@ -228,7 +236,7 @@ if uploaded_files and groq_api_key:
 
                 # Get semantic context (respects document filter)
                 semantic_docs = vectorstore.similarity_search(
-                    search_query, k=3, filter=chroma_filter)
+                    search_query, k=5, filter=chroma_filter)
                 semantic_context = "\n".join([doc.page_content for doc in semantic_docs])
 
                 # Combine both
@@ -288,11 +296,3 @@ else:
 
 # ════════════════════════════════════════════════════════
 # FOOTER
-# ════════════════════════════════════════════════════════
-
-st.markdown("---")
-st.markdown(
-    "Built by **Mohammad Murtaza** | "
-    "[GitHub](https://github.com/Murtaza-data) | "
-    "Powered by RAG + LLaMA + Langchain"
-)
