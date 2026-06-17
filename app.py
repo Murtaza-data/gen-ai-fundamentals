@@ -4,7 +4,6 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
 from langchain_community.retrievers import BM25Retriever
-from langchain_community.tools import DuckDuckGoSearchRun
 from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage
@@ -281,17 +280,33 @@ if uploaded_files and groq_api_key:
                     {"context": context, "question": question}).content
             else:
                 used_web = True
-                web = DuckDuckGoSearchRun()
-                web_results = web.invoke(question)
-                web_prompt = ChatPromptTemplate.from_template("""
-                The user's documents did NOT contain the answer. Using the web search results below,
-                give a general, helpful answer. Be clear this is general web information, not from their documents.
-                Web results:
-                {web}
-                Question: {question}
-                """)
-                final_answer = (web_prompt | llm).invoke(
-                    {"web": web_results, "question": question}).content
+                # Direct DuckDuckGo call (robust to the package rename), never crashes
+                def web_search(query):
+                    try:
+                        from ddgs import DDGS
+                    except ImportError:
+                        from duckduckgo_search import DDGS
+                    with DDGS() as ddgs:
+                        results = ddgs.text(query, max_results=5)
+                    return "\n".join(r.get("body", "") for r in results)
+
+                try:
+                    web_results = web_search(question)
+                except Exception:
+                    web_results = ""
+
+                if web_results:
+                    web_prompt = ChatPromptTemplate.from_template("""
+                    The user's documents did NOT contain the answer. Using the web search results below,
+                    give a general, helpful answer. Be clear this is general web information, not from their documents.
+                    Web results:
+                    {web}
+                    Question: {question}
+                    """)
+                    final_answer = (web_prompt | llm).invoke(
+                        {"web": web_results, "question": question}).content
+                else:
+                    final_answer = "I couldn't find this in your documents, and the web search is currently unavailable. Please try rephrasing your question."
 
         # ── BLOCK 5: DISPLAY ─────────────────────────────
         if used_web:
