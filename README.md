@@ -47,9 +47,13 @@ After retrieval, an LLM grades whether the chunks are relevant. If weak, it rewr
 
 ![App interface](screenshots/app.png)
 
+<br>
+
 **Answer with citation**
 
 ![Answer with citation](screenshots/answer.png)
+
+<br>
 
 ## 🛠️ Tech Stack
 - **LLM:** Groq + LLaMA 3.3 70B
